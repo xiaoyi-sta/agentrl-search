@@ -1,0 +1,8 @@
+.venv/
+data/raw/
+*.parquet
+__pycache__/
+
+models/
+data/processed/
+artifacts/
