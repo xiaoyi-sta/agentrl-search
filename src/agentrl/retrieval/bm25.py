@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from rank_bm25 import BM25Okapi
 
-TOKEN_RE = re.compile(r"[a-z0-9]+")
+TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 STOP = set(
     "a an the of in on at to for from by with and or is are was were be been "
