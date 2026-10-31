@@ -28,8 +28,9 @@
 | E1b | 10-30 | 检索闸门 v2 | R@3 0.610 / All@3 0.315 / **R@5 0.695 / All@5 0.440** | 过闸（≥0.65 / ≥0.40） |
 | E2 | 10-30 | 0.6B × 20 题（5 次迭代） | EM 0.05 / tag_rate 0.10 / tool_hit 0.95 | 管道跑通；瓶颈在输出协议 |
 | E3 | 10-31 | **0.6B × 200 题基线** | EM 0.04 / em_contains 0.27 / tag_rate 0.20 / tool_hit 0.84 | 协议遵循与单跳惯性是主要矛盾 |
+| E4 | 10-31 | SFT 数据生成（DeepSeek V4.1 Flash） | 生成 4200 → 保留 1937（B 74% / A 16% / C 10%），avg_calls 2.06，¥5.5 | 数据可用，进 SFT |
 
-产物路径：`artifacts/retrieval_report*.json`、`artifacts/eval_smoke5/`、`artifacts/eval_base_06b_200/`。
+产物路径：`artifacts/retrieval_report*.json`、`artifacts/eval_smoke5/`、`artifacts/eval_base_06b_200/`、`data/sft/`。
 
 ---
 
@@ -69,12 +70,39 @@ Bad case 分布：
 
 ---
 
+## 2b. E4 详细（SFT 数据生成，2026-10-31）
+
+生成模型：DeepSeek V4.1 Flash（`deepseek-flash`，思考模式关闭），温度 0.8，工具调用由本地 `SearchEnv` 真实执行。
+
+| 阶段 | 生成量 | 通过 | 通过率 | 花费 |
+|---|---|---|---|---|
+| A 格式（comparison） | 1200 | 287 | 24% | ≈ ¥1.5 |
+| B 两跳（bridge，50% oracle 首跳） | 2600 | 1367 | 53% | ¥3.14 |
+| C 弃答（假实体） | 400 | 187（压到 10%） | 47% | ¥0.35 |
+| **合计** | 4200 | **1937** | 46% | **≈ ¥5.5** |
+
+最终切分：train 1841 / val 96。
+
+| 指标 | 值 |
+|---|---|
+| 类型配比 | B 74% / A 16% / C 10% |
+| 平均调用轮数 | 2.06 |
+| token 长度 | p50 849 / p95 1267 / max 2147（≤3072，无截断） |
+| 丢弃原因 | `wrong_answer` 1149、`one_hop` 250、`c_no_search` 1、`c_downsized` 201 |
+
+**校验规则**（`validate_sft.py`）：严格 EM 之外，允许 `F1 ≥ 0.8`（别名/标点差异）和“包含 gold 且长度 ≤ max(6, 3×gold 词数)”（防止啰嗦答案被误杀）。这条规则把 smoke 的保留率从 40% 提到 60%。
+
+**已知偏弱项**：A 类通过率仅 24%，占比 16% 偏低。若 SFT 后 `tag_rate < 0.9`，需补生成 A 类（约 ¥1.5）。
+
+---
+
 ## 3. 关键发现
 
 1. **检索不是瓶颈**：tool_hit 84%，2×2 中 hit_wrong 160 vs miss_wrong 32。
 2. **协议是最大瓶颈**：tag_rate 0.20，strict_call_rate 0.57；两种工具调用语法并存。
 3. **两跳缺失是结构性的**：avg_calls 0.95，而 eval200 中 160/200 是 bridge 题。
-4. **两跳检索的天然上限**：仅用问题做单次检索，AllHit@5 只有 0.44——第二跳实体名不在问题里，必须靠多轮改写查询才能拿到。这既是检索的局限，也是 agent 存在的理由。
+4. **数据侧的对齐**：SFT 数据中 74% 是两跳桥接题，与 eval200（80% bridge）分布一致；平均调用 2.06 轮，正好对应“第二跳靠改写查询”的行为。
+5. **两跳检索的天然上限**：仅用问题做单次检索，AllHit@5 只有 0.44——第二跳实体名不在问题里，必须靠多轮改写查询才能拿到。这既是检索的局限，也是 agent 存在的理由。
 
 ---
 
@@ -86,6 +114,14 @@ Bad case 分布：
 - `runner.Tools`：截断不再追加 `" ..."`，与训练环境 `SearchEnv` 的观测逐字一致。
 - 实测影响：eval200 中 top-5 仅 **7/200** 题变化；R@5 0.6925 → 0.6950。
 - **后果**：E1a/E1b 与 E2/E3 产自不同检索器版本。E1a/E1b 为闸门记录，保留；正式基线（1.7B）必须用 v2 代码重跑，避免“检索器变了”污染 SFT 前后对比。
+
+### 2026-10-31 · DeepSeek 接口适配（两次线上报错）
+
+- `422 missing field tool_call_id`：DeepSeek 要求 `role=tool` 必须配结构化 `tool_calls`。修法：发给教师模型的观测改成 `role=user` + `[TOOL OUTPUT]` 前缀；**落盘的 SFT 记录仍是 `role=tool`**，与训练/评测一致。
+- `TypeError: cannot unpack NoneType`：`work()` 的异常分支返回 `None`，主循环按二元组解包崩溃。已统一返回 `(rec, why)`；鉴权失败立刻中止，不再空跑。
+- 新增启动预检：一条 `max_tokens=1` 的请求验证 key，失败即退出（约 ¥0.0001）。
+- 新增 `--budget`：按空闲时段价格估算，超限自动停止。
+- 校验器放宽答案匹配（EM → EM/F1≥0.8/包含且不啰嗦），保留率 40% → 60%；C 类封顶 10%，避免模型过度拒答。
 
 ### 2026-10-31 · 生成脚本离线化验证
 
@@ -105,9 +141,9 @@ Bad case 分布：
 ## 6. 待办
 
 - [ ] 1.7B × 200 正式基线（GPU，约 15 min，¥0.4）
-- [ ] 用 DeepSeek 生成 A/B/C 三类 SFT 数据（预算 ¥20 上限）
-- [ ] `validate_sft.py` 校验，保留率目标 ≥50%
-- [ ] LoRA SFT（r=32，2 epoch，max_len 3072）
+- [x] 用 DeepSeek 生成 A/B/C 三类 SFT 数据（实花 ¥5.5）
+- [x] `validate_sft.py` 校验，保留率 46%，avg_calls 2.06
+- [ ] LoRA SFT（r=32，2 epoch，max_len 3072）—— 先 0.6B 冒烟再 1.7B
 - [ ] SFT 评测：tag_rate >0.9、second_call_rate >0.5、EM +8 点
 - [ ] GRPO（0.6B 验证 → 1.7B 主实验）
 

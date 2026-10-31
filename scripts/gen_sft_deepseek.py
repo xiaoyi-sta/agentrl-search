@@ -112,7 +112,8 @@ def chat(client, model: str, messages: list[dict], max_tokens: int = 512) -> str
             )
         except Exception as exc:  # noqa: BLE001
             msg = str(exc)
-            if "401" in msg or "403" in msg or "invalid_api_key" in msg.lower():
+            code = getattr(exc, "status_code", None)
+            if code in (401, 403) or "invalid_api_key" in msg.lower():
                 raise RuntimeError(f"auth failed, fix the key first: {msg}") from exc
             if attempt == 3:
                 with LOCK:
@@ -159,12 +160,13 @@ def rollout(chat_fn, item: dict, hint: str, oracle_title: str | None, fake: bool
     if oracle_title:
         first = '<tool_call>{"name": "search", "arguments": {"query": %s}}</tool_call>' % json.dumps(oracle_title)
         obs = env.search(oracle_title)
-        gen += [{"role": "assistant", "content": first}, {"role": "tool", "content": obs}]
+        gen += [{"role": "assistant", "content": first},
+                {"role": "user", "content": "[TOOL OUTPUT]\n" + obs}]
         saved += [{"role": "assistant", "content": first}, {"role": "tool", "content": obs}]
 
     for turn in range(max_turns):
         if fake:
-            text = fake_turn(turn, item, bool(oracle_title), gen[-1]["role"] == "tool")
+            text = fake_turn(turn, item, bool(oracle_title), False)
         else:
             text = chat_fn(gen)
         if not text:
@@ -176,7 +178,7 @@ def rollout(chat_fn, item: dict, hint: str, oracle_title: str | None, fake: bool
             break
         name, args = call
         obs = execute(env, name, args)
-        gen.append({"role": "tool", "content": obs})
+        gen.append({"role": "user", "content": "[TOOL OUTPUT]\n" + obs})
         saved.append({"role": "tool", "content": obs})
     return saved, env
 
@@ -202,6 +204,18 @@ def main() -> None:
     if not args.fake:
         from openai import OpenAI
         client = OpenAI(api_key=os.environ["DEEPSEEK_API_KEY"], base_url=args.base_url)
+
+    if client is not None:
+        try:
+            client.chat.completions.create(
+                model=args.model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+                extra_body={"thinking": {"type": "disabled"}},
+            )
+            print("api key ok")
+        except Exception as exc:  # noqa: BLE001
+            raise SystemExit(f"API key check failed, nothing was generated: {exc}") from exc
 
     exclude: set[str] = set()
     for p in Path("data/processed/splits").glob("*.jsonl"):
@@ -231,7 +245,7 @@ def main() -> None:
     def work(idx_item):
         idx, item = idx_item
         if STOP.is_set():
-            return None
+            return None, "stopped"
         oracle = None
         if args.type == "B" and item.get("supporting_titles") and (idx % 100) < args.oracle_ratio * 100:
             oracle = item["supporting_titles"][0]
@@ -241,7 +255,10 @@ def main() -> None:
                 item, HINTS[args.type], oracle, fake=args.fake)
         except Exception as exc:  # noqa: BLE001
             print("ERR", item["qid"], exc, file=sys.stderr)
-            return None
+            if "auth failed" in str(exc):
+                STOP.set()
+                return None, "auth_failed"
+            return None, "error"
         if not msgs:
             return None, "empty"
         if parse_answer(msgs[-1]["content"]) is None:
@@ -273,6 +290,8 @@ def main() -> None:
           f"miss={STATS['miss']:,} errors={STATS['errors']}")
     print(f"cost: off-peak ¥{cost(False):.2f} | peak ¥{cost(True):.2f}")
     print("drops:", DROPS)
+    if "auth_failed" in DROPS:
+        raise SystemExit("aborted: API key invalid (rotate it at platform.deepseek.com)")
     if STOP.is_set():
         print("!! stopped by budget guard")
 

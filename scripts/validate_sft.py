@@ -23,10 +23,22 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from agentrl.env.search_env import SearchEnv  # noqa: E402
-from agentrl.eval.metrics import em  # noqa: E402
+from agentrl.eval.metrics import contains_answer, em, f1  # noqa: E402
 from agentrl.eval.runner import parse_answer, parse_tool_call  # noqa: E402
 
 ABSTAIN = ("unknown", "not found", "cannot find", "no information", "not mentioned")
+
+
+def answer_ok(pred: str, gold: str) -> str | None:
+    """Strict EM first; then allow paraphrases that are clearly the same answer."""
+    if em(pred, gold) >= 1.0:
+        return "exact"
+    if f1(pred, gold) >= 0.8:
+        return "f1"
+    short_enough = len(pred.split()) <= max(6, 3 * len(gold.split()))
+    if contains_answer(pred, gold) >= 1.0 and short_enough:
+        return "contains"
+    return None
 
 
 def execute(env: SearchEnv, name: str, args: dict) -> str:
@@ -61,6 +73,8 @@ def main() -> None:
     ap.add_argument("--train", default="data/sft/train.jsonl")
     ap.add_argument("--val", default="data/sft/val.jsonl")
     ap.add_argument("--val-ratio", type=float, default=0.05)
+    ap.add_argument("--c-ratio", type=float, default=0.10,
+                    help="cap abstain samples at this share of the final dataset")
     args = ap.parse_args()
 
     kept, drop, seen = [], {}, set()
@@ -82,17 +96,36 @@ def main() -> None:
             if r["type"] == "B" and calls < 2:
                 drop["one_hop"] = drop.get("one_hop", 0) + 1
                 continue
-            if r["type"] in ("A", "B") and em(ans, r["answer"]) < 1.0:
-                drop["wrong_answer"] = drop.get("wrong_answer", 0) + 1
-                continue
-            if r["type"] == "C" and not any(k in ans.lower() for k in ABSTAIN):
-                drop["not_abstain"] = drop.get("not_abstain", 0) + 1
-                continue
+            match = None
+            if r["type"] in ("A", "B"):
+                match = answer_ok(ans, r["answer"])
+                if match is None:
+                    drop["wrong_answer"] = drop.get("wrong_answer", 0) + 1
+                    continue
+            if r["type"] == "C":
+                if not any(k in ans.lower() for k in ABSTAIN):
+                    drop["not_abstain"] = drop.get("not_abstain", 0) + 1
+                    continue
+                if calls < 1:
+                    drop["c_no_search"] = drop.get("c_no_search", 0) + 1
+                    continue
             if sum(len(m["content"]) for m in msgs) > 9000:
                 drop["too_long"] = drop.get("too_long", 0) + 1
                 continue
             seen.add(r["qid"])
-            kept.append({"messages": msgs, "meta": {"qid": r["qid"], "type": r["type"], "calls": calls}})
+            kept.append({"messages": msgs,
+                         "meta": {"qid": r["qid"], "type": r["type"], "calls": calls, "match": match}})
+
+    # abstain samples teach grounding, but too many make the model over-refuse
+    c_rows = [x for x in kept if x["meta"]["type"] == "C"]
+    rest = [x for x in kept if x["meta"]["type"] != "C"]
+    if c_rows and rest:
+        cap = int(args.c_ratio * len(rest) / (1 - args.c_ratio))
+        if len(c_rows) > cap:
+            random.Random(0).shuffle(c_rows)
+            drop["c_downsized"] = len(c_rows) - cap
+            c_rows = c_rows[:cap]
+    kept = rest + c_rows
 
     random.Random(0).shuffle(kept)
     n_val = max(1, int(len(kept) * args.val_ratio)) if kept else 0

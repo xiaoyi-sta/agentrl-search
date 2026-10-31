@@ -67,6 +67,19 @@ def main() -> None:
         peft_config=lora,
     )
     print("assistant_only_loss =", trainer.args.assistant_only_loss)
+
+    # Preflight: TRL swaps in a template with {% generation %} markers; if that
+    # fails, the mask is empty and the model would train on tool observations too.
+    sample = ds["train"][0]["messages"]
+    tpl = getattr(trainer, "chat_template", None) or trainer.processing_class.chat_template
+    enc = trainer.processing_class.apply_chat_template(
+        sample, chat_template=tpl, tokenize=True, return_dict=True,
+        return_assistant_tokens_mask=True,
+    )
+    n_assistant = int(sum(enc["assistant_masks"]))
+    print(f"preflight: {n_assistant}/{len(enc['input_ids'])} tokens carry loss")
+    if n_assistant == 0:
+        raise SystemExit("assistant mask is empty -> assistant_only_loss is broken, refusing to train")
     trainer.train(resume_from_checkpoint=args.resume or None)
     out = Path(args.out) / "final"
     trainer.save_model(out)

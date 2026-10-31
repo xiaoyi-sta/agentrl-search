@@ -8,3 +8,5 @@ data/processed/
 artifacts/
 .DS_Store
 .DS_Store
+data/sft/
+data/sft/
