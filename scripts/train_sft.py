@@ -9,6 +9,7 @@ Dataset rows must look like {"messages": [ {role, content}, ... ]}.
 from __future__ import annotations
 
 import argparse
+import inspect
 from pathlib import Path
 
 from datasets import load_dataset
@@ -40,14 +41,13 @@ def main() -> None:
         r=32, lora_alpha=64, lora_dropout=0.05, bias="none",
         task_type="CAUSAL_LM", target_modules=TARGETS,
     )
-    cfg = SFTConfig(
+    kwargs = dict(
         output_dir=args.out,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch,
         gradient_accumulation_steps=args.accum,
         learning_rate=args.lr,
         lr_scheduler_type="cosine",
-        warmup_ratio=0.03,
         max_length=args.max_length,
         packing=False,
         assistant_only_loss=True,
@@ -61,6 +61,20 @@ def main() -> None:
         eval_steps=100,
         report_to="none",
     )
+    # transformers/trl versions differ in accepted fields (e.g. warmup_ratio
+    # moved out of TrainingArguments in v5); drop unknown keys instead of failing.
+    valid = set(inspect.signature(SFTConfig.__init__).parameters)
+    dropped = [k for k in kwargs if k not in valid]
+    for k in dropped:
+        kwargs.pop(k)
+    if dropped:
+        print("ignored SFTConfig args:", dropped)
+    if "max_length" not in valid and "max_seq_length" in valid:
+        kwargs["max_seq_length"] = args.max_length
+    if "assistant_only_loss" not in valid:
+        print("WARNING: this trl version has no assistant_only_loss; loss will cover the full sequence")
+    cfg = SFTConfig(**kwargs)
+
     trainer = SFTTrainer(
         model=args.model, args=cfg,
         train_dataset=ds["train"], eval_dataset=ds["validation"],

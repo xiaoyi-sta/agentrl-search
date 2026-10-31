@@ -29,6 +29,9 @@
 | E2 | 10-30 | 0.6B × 20 题（5 次迭代） | EM 0.05 / tag_rate 0.10 / tool_hit 0.95 | 管道跑通；瓶颈在输出协议 |
 | E3 | 10-31 | **0.6B × 200 题基线** | EM 0.04 / em_contains 0.27 / tag_rate 0.20 / tool_hit 0.84 | 协议遵循与单跳惯性是主要矛盾 |
 | E4 | 10-31 | SFT 数据生成（DeepSeek V4.1 Flash） | 生成 4200 → 保留 1937（B 74% / A 16% / C 10%），avg_calls 2.06，¥5.5 | 数据可用，进 SFT |
+| E5 | 10-31 | **1.7B × 200 题基线**（4090） | EM 0.140 / F1 0.225 / tag_rate 0.745 / avg_calls 1.62 / tool_hit 0.920 | 协议基本学会，瓶颈转为“检索到了答不对” |
+| E6 | 11-01 | **LoRA SFT（1841 条，2 epoch）** | train_loss 0.289 / eval_loss 0.258 / 28 min / ¥1.2 | 收敛，无过拟合 |
+| E7 | 11-01 | SFT 模型 × 200 题 | **EM 0.405** / F1 0.531 / tag_rate 0.960 / avg_calls 2.21 / tool_hit 0.955 | 相对基线 **+26.5 点**，链路成立 |
 
 产物路径：`artifacts/retrieval_report*.json`、`artifacts/eval_smoke5/`、`artifacts/eval_base_06b_200/`、`data/sft/`。
 
@@ -93,6 +96,68 @@ Bad case 分布：
 **校验规则**（`validate_sft.py`）：严格 EM 之外，允许 `F1 ≥ 0.8`（别名/标点差异）和“包含 gold 且长度 ≤ max(6, 3×gold 词数)”（防止啰嗦答案被误杀）。这条规则把 smoke 的保留率从 40% 提到 60%。
 
 **已知偏弱项**：A 类通过率仅 24%，占比 16% 偏低。若 SFT 后 `tag_rate < 0.9`，需补生成 A 类（约 ¥1.5）。
+
+---
+
+## 2c. E5 详细（1.7B × 200 基线，2026-10-31）
+
+配置：Qwen3-1.7B（ModelScope 本地权重），RTX 4090 24G，bf16，greedy，5 轮上限，200 题，502.5s（≈8.4 min，¥0.6）。
+
+| 指标 | 1.7B | 0.6B（E3） | Δ |
+|---|---|---|---|
+| EM | 0.140 | 0.040 | +0.100 |
+| F1 | 0.225 | 0.050 | +0.175 |
+| EM(contains) | 0.345 | 0.270 | +0.075 |
+| tag_rate | **0.745** | 0.200 | +0.545 |
+| avg_calls | **1.62** | 0.95 | +0.67 |
+| strict_call_rate | **1.000** | 0.571 | +0.429 |
+| tool_hit_rate | 0.920 | 0.840 | +0.080 |
+| no_answer_rate | 0.255 | 0.800 | −0.545 |
+
+Bad case：`reasoning_error` 111、`no_answer` 51、`correct` 28、`retrieval_miss` 10。
+
+2×2：
+
+| | 答对 | 答错 |
+|---|---|---|
+| 检索到 gold | 27 | **157** |
+| 未检索到 | 1 | 15 |
+
+**结论**：1.7B 把“协议”和“第二跳”基本学会了（strict_call 1.00、avg_calls 1.62），瓶颈完全转到**“检索到了但答不对”**（157/168）。同时 `em_contains 0.345` 远高于 EM 0.140，说明大量答案语义正确但形式不同（如 `Alan Turing` vs `Alan Mathison Turing`、`Royal Navy` vs `Navy`），**严格 EM 低估了真实能力**，报告中需同时给出 lenient 口径。
+
+---
+
+## 2d. E6/E7 详细（LoRA SFT + 评测，2026-11-01）
+
+训练：Qwen3-1.7B + LoRA（r=32，α=64，7 个投影层），1841 条，2 epoch，max_len 3072，batch 1 × accum 8，lr 1e-4 cosine，bf16 + 梯度检查点。462 步 / 28 分钟 / ¥1.2。
+
+| 训练指标 | 值 |
+|---|---|
+| train_loss | 0.289 |
+| eval_loss | **0.2575**（低于 train，无过拟合） |
+| eval_mean_token_accuracy | 0.9334 |
+| eval_entropy | 0.2101（未塌缩） |
+
+评测（合并 LoRA 后，eval200，537.5s）：
+
+| 指标 | 基线 E5 | SFT | Δ |
+|---|---|---|---|
+| **EM** | 0.140 | **0.405** | **+0.265** |
+| F1 | 0.225 | 0.531 | +0.306 |
+| EM(contains) | 0.345 | 0.520 | +0.175 |
+| tag_rate | 0.745 | **0.960** | +0.215 |
+| avg_calls | 1.62 | 2.21 | +0.59 |
+| tool_hit_rate | 0.920 | 0.955 | +0.035 |
+| no_answer_rate | 0.255 | 0.040 | −0.215 |
+| invalid_call_rate | 0.000 | 0.018 | +0.018 |
+
+2×2：hit_correct 80 / hit_wrong 111 / miss_correct 1 / miss_wrong 8。Bad case：`reasoning_error` 106、`correct` 81、`max_turns_hit` 8、`retrieval_miss` 5。
+
+**结论**：
+1. 相对基线 **+26.5 点 EM**，远超 +8 点的验收线；`tag_rate 0.96`、`no_answer 0.04` 说明协议已学会。
+2. 剩余 111 个 hit_wrong 中，有相当比例是**答案形式差异**（`2 acres` vs `2 acre`、`the Royal Navy` vs `Navy`），严格 EM 仍偏保守（`em_contains 0.52`）。
+3. **新问题：4% 的题跑满 5 轮**（max_turns_hit 8）——SFT 教会了“多搜”，但没教“何时停”。这正好是 P6 奖励里加工具预算惩罚的动机。
+4. 无数据泄漏：train∩eval200 = 0，val∩eval200 = 0。
 
 ---
 
