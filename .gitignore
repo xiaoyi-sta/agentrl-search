@@ -1,15 +1,17 @@
-.venv/
-data/raw/
-*.parquet
+# python
 __pycache__/
+*.pyc
+.venv/
 
-models/
+# data (large, rebuildable from scripts/build_data.py)
+data/raw/
 data/processed/
+data/sft/
+*.parquet
+
+# training outputs
 artifacts/
-.DS_Store
-.DS_Store
-data/sft/
-data/sft/
-.DS_Store
 models/
-assets/*.tmp
+
+# os / editor
+.DS_Store
