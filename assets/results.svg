@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="300" viewBox="0 0 720 300" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">
+  <rect width="720" height="300" fill="#ffffff"/>
+  <text x="32" y="38" font-size="17" font-weight="600" fill="#1f2328">HotpotQA-200 · Exact Match</text>
+  <text x="32" y="58" font-size="12" fill="#57606a">Qwen3-1.7B · single 24G GPU · greedy decoding</text>
+
+  <g font-size="12" fill="#57606a">
+    <text x="150" y="98" text-anchor="end">Baseline</text>
+    <text x="150" y="140" text-anchor="end">+ SFT</text>
+    <text x="150" y="182" text-anchor="end">+ RFT</text>
+    <text x="150" y="224" text-anchor="end">+ GRPO</text>
+  </g>
+
+  <!-- axis: 0.45 -> 480px, scale 1000 -->
+  <line x1="165" y1="80" x2="165" y2="240" stroke="#d0d7de"/>
+  <line x1="165" y1="240" x2="665" y2="240" stroke="#d0d7de"/>
+
+  <rect x="165" y="86" width="149" height="18" rx="3" fill="#8c959f"/>
+  <rect x="165" y="128" width="432" height="18" rx="3" fill="#1f883d"/>
+  <rect x="165" y="170" width="421" height="18" rx="3" fill="#54aeff"/>
+  <rect x="165" y="212" width="432" height="18" rx="3" fill="#8250df"/>
+
+  <g font-size="12" font-weight="600" fill="#1f2328">
+    <text x="322" y="99">0.140</text>
+    <text x="605" y="141">0.405</text>
+    <text x="594" y="183">0.395</text>
+    <text x="605" y="225">0.405</text>
+  </g>
+
+  <g font-size="11" fill="#8c959f">
+    <text x="165" y="260">0.0</text>
+    <text x="485" y="260">0.3</text>
+    <text x="665" y="260" text-anchor="end">0.45</text>
+  </g>
+  <text x="32" y="284" font-size="11" fill="#8c959f">SFT accounts for nearly all gains; RFT/GRPO are within the ±7 pt CI (n=200).</text>
+</svg>

@@ -10,3 +10,6 @@ artifacts/
 .DS_Store
 data/sft/
 data/sft/
+.DS_Store
+models/
+assets/*.tmp
