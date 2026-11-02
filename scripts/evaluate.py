@@ -55,6 +55,7 @@ def main() -> None:
     ap.add_argument("--max-turns", type=int, default=5)
     ap.add_argument("--max-new-tokens", type=int, default=256)
     ap.add_argument("--device", default="")
+    ap.add_argument("--temperature", type=float, default=0.0, help="0 = greedy")
     args = ap.parse_args()
 
     device = args.device or pick_device()
@@ -77,6 +78,7 @@ def main() -> None:
     model, tokenizer = load_model(args.model, device)
     index = BM25Index.from_jsonl(args.corpus)
     runner = Runner(model, tokenizer, index, max_turns=args.max_turns,
+                    temperature=args.temperature,
                     max_new_tokens=args.max_new_tokens, device=device)
 
     t0 = time.time()

@@ -160,12 +160,14 @@ class Runner:
         max_new_tokens: int = 256,
         device: str = "cpu",
         tools: Tools | None = None,
+        temperature: float = 0.0,
     ):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
         self.max_turns = max_turns
         self.max_new_tokens = max_new_tokens
+        self.temperature = temperature
         self.tools = tools or Tools(index)
 
     def _render(self, messages: list[dict]) -> str:
@@ -180,12 +182,15 @@ class Runner:
 
         inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4096).to(self.device)
         with torch.no_grad():
-            out = self.model.generate(
-                **inputs,
+            gen_kwargs = dict(
                 max_new_tokens=self.max_new_tokens,
-                do_sample=False,
                 pad_token_id=self.tokenizer.eos_token_id,
             )
+            if self.temperature > 0:
+                gen_kwargs.update(do_sample=True, temperature=self.temperature, top_p=0.95)
+            else:
+                gen_kwargs.update(do_sample=False)
+            out = self.model.generate(**inputs, **gen_kwargs)
         new_tokens = out[0][inputs["input_ids"].shape[1] :]
         return self.tokenizer.decode(new_tokens, skip_special_tokens=True), int(new_tokens.shape[0])
 
