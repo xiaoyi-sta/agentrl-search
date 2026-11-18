@@ -43,7 +43,7 @@ The model learns three things that a base checkpoint cannot do:
   (retrieved × correct) shows 111 failures where the gold passage *was* retrieved.
 - SFT alone captures essentially all of the gain; RFT and GRPO land inside the
   ±7 point confidence interval of a 200-question eval.
-- Every number is reproducible with the scripts below; see [`docs/experiments.md`](docs/experiments.md).
+- Every number is reproducible with the scripts below; the full analysis is in [`docs/report.md`](docs/report.md).
 
 ---
 
@@ -138,8 +138,6 @@ scripts/
 
 docs/
   report.md        full project report (design → failures → analysis)
-  experiments.md   E0–E10 log with every metric
-  resume.md        résumé bullets + 15 interview Q&As
 ```
 
 ---
@@ -196,5 +194,4 @@ Details in [`docs/report.md`](docs/report.md) §10 and §12.
 ## Docs
 
 - [Project report](docs/report.md) — 14 chapters, from task selection to reproduction
-- [Experiment log](docs/experiments.md) — E0–E10, every metric and regression
-- [Résumé material](docs/resume.md) — bullets, 15 interview Q&As, one-minute pitch
+
